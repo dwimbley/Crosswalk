@@ -1,0 +1,184 @@
+@inject IJSRuntime JS
+@implements IDisposable
+
+@if (Ticket != null)
+{
+    <div class="drawer-overlay" @onclick="OnOverlayClick">
+        <div class="drawer-panel" role="dialog" aria-label="Ticket details" @onclick:stopPropagation="true">
+            <div class="drawer-header">
+                <div class="drawer-header-content">
+                    <div style="display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap;">
+                        <SiteBadge DisplayName="@Ticket.SiteDisplayName" Color="@Ticket.SiteColor" />
+                        <span class="drawer-key">@Ticket.Key</span>
+                        @if (Ticket.IsStale)
+                        {
+                            <span class="stale-tag" title="Last synced: @Ticket.LastSuccessfulRefresh?.ToLocalTime().ToString("g")">Stale</span>
+                        }
+                    </div>
+                    <div class="drawer-summary">@Ticket.Summary</div>
+                    <a href="@Ticket.JiraUrl" target="_blank" rel="noopener noreferrer" class="drawer-open-jira">
+                        Open in Jira &#x2197;
+                    </a>
+                    <div class="drawer-url">@Ticket.JiraUrl</div>
+                </div>
+                <button class="drawer-close" @onclick="Close" title="Close (Esc)" aria-label="Close">&times;</button>
+            </div>
+
+            <div class="drawer-nav">
+                <button @onclick="Previous" disabled="@(!HasPrevious)" aria-label="Previous ticket">&larr; Prev</button>
+                <span>@(CurrentIndex + 1) of @TotalCount</span>
+                <button @onclick="Next" disabled="@(!HasNext)" aria-label="Next ticket">Next &rarr;</button>
+            </div>
+
+            @if (Ticket.IsStale)
+            {
+                <div style="padding: 0 1.5rem; padding-top: 1rem;">
+                    <div class="drawer-stale-notice">
+                        &#9888; This data is stale. Last synced: @Ticket.LastSuccessfulRefresh?.ToLocalTime().ToString("g")
+                    </div>
+                </div>
+            }
+
+            <div class="drawer-body">
+                <div class="drawer-fields">
+                    <span class="drawer-field-label">Status</span>
+                    <span class="drawer-field-value">
+                        <StatusBadge StatusName="@Ticket.Status" Category="@Ticket.NormalizedCategory" />
+                        <span style="color: var(--cw-text-muted); font-size: 0.75rem; margin-left: 0.375rem;">@Ticket.NormalizedCategory</span>
+                    </span>
+
+                    <span class="drawer-field-label">Priority</span>
+                    <span class="drawer-field-value">
+                        <PriorityDisplay PriorityName="@Ticket.Priority" PriorityOrder="@Ticket.PriorityOrder" />
+                    </span>
+
+                    <span class="drawer-field-label">Assignee</span>
+                    <span class="drawer-field-value">
+                        @Ticket.Assignee
+                        <span class="drawer-you-badge">You</span>
+                        <span style="color: var(--cw-text-muted); font-size: 0.75rem; margin-left: 0.25rem;">(@Ticket.SiteEmail)</span>
+                    </span>
+
+                    <span class="drawer-field-label">Due date</span>
+                    <span class="drawer-field-value">
+                        <DueDate Date="@Ticket.DueDate" />
+                    </span>
+
+                    <span class="drawer-field-label">Source site</span>
+                    <span class="drawer-field-value">
+                        <SiteBadge DisplayName="@Ticket.SiteDisplayName" Color="@Ticket.SiteColor" />
+                        <span style="color: var(--cw-text-muted); font-size: 0.75rem; margin-left: 0.25rem;">@Ticket.SiteBaseUrl</span>
+                    </span>
+
+                    <span class="drawer-field-label">Project</span>
+                    <span class="drawer-field-value">
+                        <span class="ticket-project-key">@Ticket.ProjectKey</span>
+                        <span class="ticket-project-name">@Ticket.ProjectName</span>
+                    </span>
+
+                    @if (Ticket.Boards.Count > 0)
+                    {
+                        <span class="drawer-field-label">Boards</span>
+                        <span class="drawer-field-value">
+                            @if (Ticket.Boards.Count == 1)
+                            {
+                                @Ticket.Boards[0].Name
+                            }
+                            else
+                            {
+                                <span>On @Ticket.Boards.Count boards &middot; listed once</span>
+                                <ul style="margin: 0.25rem 0 0; padding-left: 1.25rem; list-style: disc;">
+                                    @foreach (var board in Ticket.Boards)
+                                    {
+                                        <li>@board.Name</li>
+                                    }
+                                </ul>
+                            }
+                        </span>
+                    }
+
+                    <span class="drawer-field-label">Reporter</span>
+                    <span class="drawer-field-value">@Ticket.Reporter</span>
+
+                    <span class="drawer-field-label">Created</span>
+                    <span class="drawer-field-value">@Ticket.Created.ToLocalTime().ToString("ddd, MMM d, yyyy h:mm tt")</span>
+
+                    <span class="drawer-field-label">Updated</span>
+                    <span class="drawer-field-value">
+                        <RelativeTime Time="@Ticket.Updated" />
+                        <span style="color: var(--cw-text-muted); margin-left: 0.25rem;">(@Ticket.Updated.ToLocalTime().ToString("g"))</span>
+                    </span>
+                </div>
+
+                @if (!string.IsNullOrEmpty(Ticket.DescriptionHtml))
+                {
+                    <div class="drawer-description">
+                        <h3>Description</h3>
+                        <div class="drawer-description-content">@((MarkupString)Ticket.DescriptionHtml)</div>
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public TicketViewModel? Ticket { get; set; }
+    [Parameter] public int CurrentIndex { get; set; }
+    [Parameter] public int TotalCount { get; set; }
+    [Parameter] public EventCallback OnClose { get; set; }
+    [Parameter] public EventCallback OnPrevious { get; set; }
+    [Parameter] public EventCallback OnNext { get; set; }
+
+    private bool HasPrevious => CurrentIndex > 0;
+    private bool HasNext => CurrentIndex < TotalCount - 1;
+    private DotNetObjectReference<DetailDrawer>? _objRef;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (Ticket != null && _objRef == null)
+        {
+            _objRef = DotNetObjectReference.Create(this);
+            await JS.InvokeVoidAsync("crosswalk.registerDrawerKeys", _objRef);
+        }
+        else if (Ticket == null && _objRef != null)
+        {
+            await JS.InvokeVoidAsync("crosswalk.unregisterDrawerKeys");
+            _objRef?.Dispose();
+            _objRef = null;
+        }
+    }
+
+    private async Task OnOverlayClick()
+    {
+        // Click on the overlay (backdrop area) closes the drawer.
+        // The panel has @onclick:stopPropagation so clicks inside it don't bubble here.
+        await Close();
+    }
+
+    private async Task Close() => await OnClose.InvokeAsync();
+    private async Task Previous() { if (HasPrevious) await OnPrevious.InvokeAsync(); }
+    private async Task Next() { if (HasNext) await OnNext.InvokeAsync(); }
+
+    [JSInvokable]
+    public async Task OnKeyFromJs(string key)
+    {
+        switch (key)
+        {
+            case "Escape":
+                await Close();
+                break;
+            case "ArrowLeft":
+                await Previous();
+                break;
+            case "ArrowRight":
+                await Next();
+                break;
+        }
+    }
+
+    public void Dispose()
+    {
+        _objRef?.Dispose();
+    }
+}

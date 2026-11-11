@@ -1,0 +1,10 @@
+@* Site badge with colored background *@
+<span class="site-badge" style="background-color: @(Color ?? "#64748b")" title="@DisplayName">
+    <span class="site-dot"></span>
+    @DisplayName
+</span>
+
+@code {
+    [Parameter] public string DisplayName { get; set; } = "";
+    [Parameter] public string? Color { get; set; }
+}

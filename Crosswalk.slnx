@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Crosswalk.App/Crosswalk.App.csproj" />
+    <Project Path="src/Crosswalk.Core/Crosswalk.Core.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Crosswalk.Tests/Crosswalk.Tests.csproj" />
+  </Folder>
+</Solution>

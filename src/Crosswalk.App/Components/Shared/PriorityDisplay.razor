@@ -1,0 +1,30 @@
+@* Priority icon + text *@
+<span class="priority-cell @CssClass">
+    <span class="priority-icon">@Icon</span>
+    @PriorityName
+</span>
+
+@code {
+    [Parameter] public string PriorityName { get; set; } = "";
+    [Parameter] public int PriorityOrder { get; set; }
+
+    private string CssClass => PriorityName.ToLowerInvariant() switch
+    {
+        "highest" => "priority-highest",
+        "high" => "priority-high",
+        "medium" => "priority-medium",
+        "low" => "priority-low",
+        "lowest" => "priority-lowest",
+        _ => "priority-medium"
+    };
+
+    private string Icon => PriorityName.ToLowerInvariant() switch
+    {
+        "highest" => "\u2191\u2191",  // ↑↑
+        "high" => "\u2191",           // ↑
+        "medium" => "\u003D",         // =
+        "low" => "\u2193",            // ↓
+        "lowest" => "\u2193\u2193",   // ↓↓
+        _ => "="
+    };
+}

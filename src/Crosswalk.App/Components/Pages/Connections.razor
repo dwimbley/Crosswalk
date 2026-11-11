@@ -1,0 +1,190 @@
+@page "/connections"
+@inject AppState AppState
+@inject NavigationManager Nav
+@inject IConfigStore ConfigStore
+@implements IDisposable
+
+<PageTitle>Connections - Crosswalk</PageTitle>
+
+<div class="page-container">
+    <h1 class="page-title">Connections</h1>
+    <p class="page-subtitle">
+        Each Jira site is its own connection with its own account.
+    </p>
+
+    @if (Statuses.Count == 0)
+    {
+        <div class="empty-state">
+            <h2>No connections yet</h2>
+            <p>Connect to a Jira Cloud site to see your assigned tickets.</p>
+            <a href="/connections/add" class="btn-primary">+ Add Jira site</a>
+        </div>
+    }
+    else
+    {
+        <div class="conn-grid">
+            @foreach (var status in Statuses)
+            {
+                <div class="conn-card">
+                    <div class="conn-card-header">
+                        <SiteBadge DisplayName="@status.DisplayName" Color="@status.Color" />
+                        <span class="conn-health-badge @GetHealthClass(status.Health)">
+                            <span class="health-dot"></span>
+                            @GetHealthLabel(status.Health)
+                        </span>
+                    </div>
+
+                    <div class="conn-card-details">
+                        <div><span class="label">Host</span> @(new Uri(status.BaseUrl).Host)</div>
+                        <div><span class="label">Email</span> @status.Email</div>
+                        @if (!string.IsNullOrEmpty(status.IdentityDisplayName))
+                        {
+                            <div><span class="label">Signed in as</span> @status.IdentityDisplayName</div>
+                        }
+                        @if (status.LastSuccessfulRefresh.HasValue)
+                        {
+                            <div><span class="label">Last refresh</span> @status.LastSuccessfulRefresh.Value.ToLocalTime().ToString("g")</div>
+                        }
+                        <div><span class="label">Tickets</span> @status.TicketCount assigned to you</div>
+
+                        @if (status.Projects.Count > 0)
+                        {
+                            <div style="margin-top: 0.5rem;">
+                                <span class="label">Projects</span>
+                                <div class="conn-card-chips">
+                                    @foreach (var proj in status.Projects)
+                                    {
+                                        <span class="conn-chip">@proj</span>
+                                    }
+                                </div>
+                            </div>
+                        }
+
+                        @if (status.Boards.Count > 0)
+                        {
+                            <div style="margin-top: 0.375rem;">
+                                <span class="label">Boards</span>
+                                <div class="conn-card-chips">
+                                    @foreach (var board in status.Boards)
+                                    {
+                                        <span class="conn-chip">@board.Name</span>
+                                    }
+                                </div>
+                            </div>
+                        }
+                    </div>
+
+                    @if (!string.IsNullOrEmpty(status.Error))
+                    {
+                        <div class="conn-card-error">@status.Error</div>
+                    }
+
+                    <div class="conn-card-actions">
+                        @if (status.Health == ConnectionHealth.SyncFailed || status.Health == ConnectionHealth.Healthy)
+                        {
+                            <button class="btn-secondary" @onclick="() => RefreshConnection(status.Id)">
+                                @(status.Health == ConnectionHealth.SyncFailed ? "Retry" : "Refresh")
+                            </button>
+                        }
+                        @if (status.Health == ConnectionHealth.NeedsReauthorization)
+                        {
+                            <a href="/connections/edit/@status.Id" class="btn-primary" style="font-size:0.8125rem; padding:0.375rem 0.75rem;">Reauthorize</a>
+                        }
+                        <a href="/connections/edit/@status.Id" class="btn-secondary">Edit</a>
+                        <button class="btn-danger" @onclick="() => ConfirmRemove(status)">Remove</button>
+                    </div>
+                </div>
+            }
+        </div>
+
+        <div style="display:flex; gap:0.75rem; margin-bottom: 1rem;">
+            <a href="/connections/add" class="btn-primary">+ Add Jira site</a>
+            <button class="btn-secondary" @onclick="RefreshAll">Refresh all</button>
+        </div>
+    }
+
+    <div class="conn-readonly-note">
+        Crosswalk has read-only access. It can view tickets assigned to you but cannot create, edit, comment on, or transition any ticket.
+    </div>
+</div>
+
+@if (_showConfirmRemove && _removeTarget != null)
+{
+    <div class="confirm-overlay" @onclick="CancelRemove">
+        <div class="confirm-dialog" @onclick:stopPropagation="true">
+            <h3>Remove connection</h3>
+            <p>Remove <strong>@_removeTarget.DisplayName</strong>? This will delete the config entry, stored API token, and cached tickets.</p>
+            <div class="confirm-actions">
+                <button class="btn-cancel" @onclick="CancelRemove">Cancel</button>
+                <button class="btn-danger" @onclick="ExecuteRemove">Remove</button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private List<ConnectionStatus> Statuses = [];
+    private bool _showConfirmRemove;
+    private ConnectionStatus? _removeTarget;
+
+    protected override void OnInitialized()
+    {
+        AppState.OnStateChanged += OnStateChanged;
+        Refresh();
+    }
+
+    private void OnStateChanged() => InvokeAsync(() => { Refresh(); StateHasChanged(); });
+
+    private void Refresh() => Statuses = AppState.GetConnectionStatuses();
+
+    private async Task RefreshConnection(string id) => await AppState.RefreshConnectionAsync(id);
+    private async Task RefreshAll() => await AppState.RefreshAllAsync();
+
+    private void ConfirmRemove(ConnectionStatus status)
+    {
+        _removeTarget = status;
+        _showConfirmRemove = true;
+    }
+
+    private void CancelRemove()
+    {
+        _showConfirmRemove = false;
+        _removeTarget = null;
+    }
+
+    private async Task ExecuteRemove()
+    {
+        if (_removeTarget == null) return;
+        var id = _removeTarget.Id;
+        _showConfirmRemove = false;
+        _removeTarget = null;
+
+        var config = await ConfigStore.LoadAsync();
+        config.Connections.RemoveAll(c => c.Id == id);
+        await ConfigStore.SaveAsync(config);
+
+        // Refresh state
+        Refresh();
+        StateHasChanged();
+    }
+
+    private static string GetHealthClass(ConnectionHealth h) => h switch
+    {
+        ConnectionHealth.Healthy => "healthy",
+        ConnectionHealth.Refreshing => "refreshing",
+        ConnectionHealth.NeedsReauthorization => "needs-reauth",
+        ConnectionHealth.SyncFailed => "sync-failed",
+        _ => "not-connected"
+    };
+
+    private static string GetHealthLabel(ConnectionHealth h) => h switch
+    {
+        ConnectionHealth.Healthy => "Healthy",
+        ConnectionHealth.Refreshing => "Refreshing\u2026",
+        ConnectionHealth.NeedsReauthorization => "Needs reauthorization",
+        ConnectionHealth.SyncFailed => "Sync failed",
+        _ => "Not connected"
+    };
+
+    public void Dispose() => AppState.OnStateChanged -= OnStateChanged;
+}

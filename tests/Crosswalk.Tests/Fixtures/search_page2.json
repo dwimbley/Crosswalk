@@ -1,0 +1,25 @@
+{
+  "startAt": 2,
+  "maxResults": 2,
+  "total": 3,
+  "issues": [
+    {
+      "key": "CLM-102",
+      "fields": {
+        "summary": "Test ticket three",
+        "status": {
+          "name": "Blocked",
+          "statusCategory": { "key": "indeterminate", "name": "In Progress" }
+        },
+        "priority": { "name": "Highest", "id": "1" },
+        "duedate": "2026-11-10",
+        "updated": "2026-11-09T16:00:00.000+0000",
+        "created": "2026-11-03T08:00:00.000+0000",
+        "reporter": { "displayName": "Alex Johnson", "accountId": "acc-r1" },
+        "assignee": { "displayName": "David Wimbley", "accountId": "acc-a1" },
+        "project": { "key": "CLM", "name": "Claims Platform" },
+        "description": null
+      }
+    }
+  ]
+}

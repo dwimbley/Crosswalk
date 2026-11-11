@@ -1,0 +1,47 @@
+@* Due date display with overdue/today/tomorrow highlighting *@
+@if (Date.HasValue)
+{
+    <span class="@CssClass" title="@Date.Value.ToString("ddd, MMM d, yyyy")">@DisplayText</span>
+}
+else
+{
+    <span class="updated-relative">&mdash;</span>
+}
+
+@code {
+    [Parameter] public DateTimeOffset? Date { get; set; }
+
+    private string DisplayText
+    {
+        get
+        {
+            if (!Date.HasValue) return "\u2014";
+            var today = DateTimeOffset.Now.Date;
+            var due = Date.Value.Date;
+
+            if (due < today)
+            {
+                var daysAgo = (today - due).Days;
+                return $"Overdue \u00b7 {due:MMM d}";
+            }
+            if (due == today) return "Today";
+            if (due == today.AddDays(1)) return "Tomorrow";
+            return due.ToString("ddd, MMM d");
+        }
+    }
+
+    private string CssClass
+    {
+        get
+        {
+            if (!Date.HasValue) return "";
+            var today = DateTimeOffset.Now.Date;
+            var due = Date.Value.Date;
+
+            if (due < today) return "due-overdue";
+            if (due == today) return "due-today";
+            if (due == today.AddDays(1)) return "due-tomorrow";
+            return "";
+        }
+    }
+}

@@ -1,0 +1,9 @@
+{
+  "startAt": 0,
+  "maxResults": 50,
+  "isLast": true,
+  "values": [
+    { "id": 1, "name": "Claims Sprint Board", "location": { "projectKey": "CLM" } },
+    { "id": 2, "name": "Platform Kanban", "location": { "projectKey": "PLAT" } }
+  ]
+}

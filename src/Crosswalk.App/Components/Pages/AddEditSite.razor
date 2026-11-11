@@ -1,0 +1,416 @@
+@page "/connections/add"
+@page "/connections/edit/{ConnectionId}"
+@inject AppState AppState
+@inject IConfigStore ConfigStore
+@inject Crosswalk.Core.Secrets.ISecretStore SecretStore
+@inject Crosswalk.Core.Jira.IJiraClient JiraClient
+@inject NavigationManager Nav
+
+<PageTitle>@(IsEdit ? "Edit" : "Add") Jira site - Crosswalk</PageTitle>
+
+<div class="page-container">
+    <div class="page-breadcrumb">
+        <a href="/connections">&larr; Connections</a>
+        <span>&rsaquo;</span>
+        <span>@(IsEdit ? $"Edit {DisplayName}" : "Add Jira site")</span>
+    </div>
+
+    <h1 class="page-title">@(IsEdit ? "Edit Jira site" : "Add Jira site")</h1>
+    <p class="page-subtitle">
+        Each Jira site is its own connection with its own account.
+        Connection settings are saved to config.json;
+        the API token goes to your operating system's credential store.
+    </p>
+
+    <!-- Step 1: Jira site -->
+    <div class="form-step">
+        <div class="form-step-header">
+            <span class="step-number">1</span>
+            <span class="form-step-title">Jira site</span>
+        </div>
+
+        <div class="form-row">
+            <label class="form-label">Site URL</label>
+            <div>
+                <input class="form-input @(UrlError != null ? "error" : "")"
+                       type="text" placeholder="https://yoursite.atlassian.net"
+                       @bind="SiteUrl" @bind:event="oninput" @onblur="NormalizeUrl" />
+                <div class="form-hint">Jira Cloud sites only. Pasting any link from the site works.</div>
+                @if (UrlError != null)
+                {
+                    <div class="form-hint" style="color:#dc2626;">@UrlError</div>
+                }
+            </div>
+        </div>
+
+        <div class="form-row">
+            <label class="form-label">Display name</label>
+            <div>
+                <input class="form-input" type="text" placeholder="My Company"
+                       @bind="DisplayName" @bind:event="oninput" />
+                <div class="form-hint">Shown on the site badge for every ticket from this site.</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Step 2: Account -->
+    <div class="form-step">
+        <div class="form-step-header">
+            <span class="step-number">2</span>
+            <span class="form-step-title">Account</span>
+        </div>
+
+        <div class="form-row">
+            <label class="form-label">Email on this site</label>
+            <div>
+                <input class="form-input" type="email" placeholder="you@company.com"
+                       @bind="Email" @bind:event="oninput" />
+                <div class="form-hint">"Assigned to me" will mean this account on this site.</div>
+            </div>
+        </div>
+
+        <div class="form-row">
+            <label class="form-label">Sign-in method</label>
+            <div class="form-radio-group">
+                <label class="form-radio">
+                    <input type="radio" name="auth" value="apiToken" checked />
+                    <strong>API token</strong>
+                    <span class="radio-hint">&middot; recommended for a personal, local app</span>
+                </label>
+                <label class="form-radio" style="opacity:0.5;">
+                    <input type="radio" name="auth" value="oauth" disabled />
+                    <strong>OAuth 2.0</strong>
+                    <span class="radio-hint">&middot; needs a registered Atlassian app and a localhost redirect &middot; coming later</span>
+                </label>
+            </div>
+        </div>
+
+        <div class="form-row">
+            <label class="form-label">API token</label>
+            <div>
+                <input class="form-input" type="password" placeholder="Paste your API token"
+                       @bind="ApiToken" @bind:event="oninput" autocomplete="off" />
+                <div class="form-hint">
+                    Saved to @SecretStore.StoreName as <code>Crosswalk/@ConnId</code>, never to config.json.
+                    <a href="https://id.atlassian.com/manage-profile/security/api-tokens" target="_blank" rel="noopener noreferrer">Create an API token</a>
+                </div>
+            </div>
+        </div>
+
+        <div style="display:flex; align-items:center; gap:0.75rem; margin-top:0.5rem;">
+            <button class="btn-secondary" @onclick="TestConnection" disabled="@(!CanTest || _testing)">
+                @(_testing ? "Testing\u2026" : (TestPassed ? "Test again" : "Test connection"))
+            </button>
+
+            @if (TestPassed)
+            {
+                <span class="test-result success">
+                    <span class="test-icon">&#10003;</span>
+                    Signed in as @TestUserName &middot; @TestProjectCount projects and @TestBoardCount boards found
+                </span>
+            }
+            else if (TestError != null)
+            {
+                <span class="test-result error">
+                    <span class="test-icon">&#10007;</span>
+                    @TestError
+                </span>
+            }
+        </div>
+    </div>
+
+    <!-- Step 3: What to include -->
+    <div class="form-step @(!TestPassed ? "disabled" : "")">
+        <div class="form-step-header">
+            <span class="step-number @(!TestPassed ? "inactive" : "")">3</span>
+            <span class="form-step-title">What to include</span>
+        </div>
+
+        @if (TestPassed)
+        {
+            <div class="form-row">
+                <label class="form-label">Projects</label>
+                <div class="checkbox-grid">
+                    @foreach (var proj in AvailableProjects)
+                    {
+                        var isSelected = SelectedProjects.Contains(proj.Key);
+                        <label class="checkbox-chip @(isSelected ? "selected" : "")"
+                               @onclick="() => ToggleProject(proj.Key)">
+                            <span class="chip-key">@proj.Key</span> @proj.Name
+                        </label>
+                    }
+                </div>
+            </div>
+
+            <div class="form-row">
+                <label class="form-label">Boards</label>
+                <div>
+                    <div class="checkbox-grid">
+                        @foreach (var board in AvailableBoards)
+                        {
+                            var isSelected = SelectedBoardIds.Contains(board.Id);
+                            <label class="checkbox-chip @(isSelected ? "selected" : "")"
+                                   @onclick="() => ToggleBoard(board)">
+                                @board.Name
+                            </label>
+                        }
+                    </div>
+                    <div class="form-hint" style="margin-top:0.5rem;">
+                        A ticket on more than one board still appears once in your queue.
+                    </div>
+                </div>
+            </div>
+
+            <div class="form-row">
+                <label class="form-label">Query sent to Jira</label>
+                <div class="jql-preview">@BuildPreviewJql()</div>
+            </div>
+        }
+    </div>
+
+    <div class="form-actions">
+        <button class="btn-cancel" @onclick="Cancel">Cancel</button>
+        <button class="btn-primary" @onclick="Save" disabled="@(!CanSave || _saving)">
+            @(_saving ? "Saving\u2026" : "Save connection")
+        </button>
+    </div>
+</div>
+
+@code {
+    [Parameter] public string? ConnectionId { get; set; }
+
+    private bool IsEdit => !string.IsNullOrEmpty(ConnectionId);
+    private string ConnId => ConnectionId ?? GenerateId();
+
+    // Step 1
+    private string SiteUrl { get; set; } = "";
+    private string DisplayName { get; set; } = "";
+    private string? UrlError;
+
+    // Step 2
+    private string Email { get; set; } = "";
+    private string ApiToken { get; set; } = "";
+
+    // Test results
+    private bool _testing;
+    private bool TestPassed;
+    private string? TestError;
+    private string? TestUserName;
+    private string? TestAccountId;
+    private int TestProjectCount;
+    private int TestBoardCount;
+    private List<Crosswalk.Core.Jira.JiraProject> AvailableProjects = [];
+    private List<Crosswalk.Core.Jira.JiraBoard> AvailableBoards = [];
+
+    // Step 3
+    private HashSet<string> SelectedProjects = [];
+    private HashSet<int> SelectedBoardIds = [];
+
+    private bool _saving;
+
+    private bool CanTest =>
+        !string.IsNullOrWhiteSpace(SiteUrl) &&
+        !string.IsNullOrWhiteSpace(Email) &&
+        !string.IsNullOrWhiteSpace(ApiToken);
+
+    private bool CanSave => TestPassed && SelectedProjects.Count > 0;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (IsEdit)
+        {
+            var config = await ConfigStore.LoadAsync();
+            var conn = config.Connections.FirstOrDefault(c => c.Id == ConnectionId);
+            if (conn != null)
+            {
+                SiteUrl = conn.BaseUrl;
+                DisplayName = conn.DisplayName;
+                Email = conn.Email;
+                SelectedProjects = [.. conn.Projects];
+                SelectedBoardIds = [.. conn.Boards.Select(b => b.Id)];
+
+                // Load existing token
+                var token = await SecretStore.GetAsync($"Crosswalk/{conn.Id}");
+                if (token != null)
+                {
+                    ApiToken = token;
+                    // Auto-test on edit
+                    await TestConnection();
+                }
+            }
+        }
+    }
+
+    private void NormalizeUrl()
+    {
+        var normalized = JiraUrlNormalizer.Normalize(SiteUrl);
+        if (normalized != null)
+        {
+            SiteUrl = normalized;
+            UrlError = null;
+
+            // Auto-fill display name if empty
+            if (string.IsNullOrWhiteSpace(DisplayName))
+            {
+                var siteName = JiraUrlNormalizer.ExtractSiteName(normalized);
+                if (siteName != null)
+                {
+                    DisplayName = char.ToUpper(siteName[0]) + siteName[1..];
+                }
+            }
+        }
+        else if (!string.IsNullOrWhiteSpace(SiteUrl))
+        {
+            UrlError = "Could not parse as a Jira Cloud URL.";
+        }
+    }
+
+    private async Task TestConnection()
+    {
+        if (!CanTest) return;
+
+        NormalizeUrl();
+        if (UrlError != null) return;
+
+        _testing = true;
+        TestPassed = false;
+        TestError = null;
+        StateHasChanged();
+
+        try
+        {
+            var user = await JiraClient.GetMyselfAsync(SiteUrl, Email, ApiToken);
+            TestUserName = user.DisplayName;
+            TestAccountId = user.AccountId;
+
+            AvailableProjects = await JiraClient.GetProjectsAsync(SiteUrl, Email, ApiToken);
+            AvailableBoards = await JiraClient.GetBoardsAsync(SiteUrl, Email, ApiToken);
+
+            TestProjectCount = AvailableProjects.Count;
+            TestBoardCount = AvailableBoards.Count;
+            TestPassed = true;
+
+            // Pre-select all projects/boards if none selected yet
+            if (SelectedProjects.Count == 0)
+                SelectedProjects = [.. AvailableProjects.Select(p => p.Key)];
+            if (SelectedBoardIds.Count == 0)
+                SelectedBoardIds = [.. AvailableBoards.Select(b => b.Id)];
+        }
+        catch (Crosswalk.Core.Jira.JiraAuthException)
+        {
+            TestError = "Authentication failed. Check your email and API token.";
+        }
+        catch (HttpRequestException ex)
+        {
+            TestError = $"Network error: {ex.Message}";
+        }
+        catch (Exception ex)
+        {
+            TestError = ex.Message;
+        }
+        finally
+        {
+            _testing = false;
+            StateHasChanged();
+        }
+    }
+
+    private void ToggleProject(string key)
+    {
+        if (!SelectedProjects.Remove(key))
+            SelectedProjects.Add(key);
+    }
+
+    private void ToggleBoard(Crosswalk.Core.Jira.JiraBoard board)
+    {
+        if (!SelectedBoardIds.Remove(board.Id))
+            SelectedBoardIds.Add(board.Id);
+    }
+
+    private string BuildPreviewJql()
+    {
+        var parts = new List<string> { "assignee = currentUser()" };
+        if (SelectedProjects.Count > 0)
+        {
+            var projects = string.Join(", ", SelectedProjects);
+            parts.Add($"AND project in ({projects})");
+        }
+        parts.Add("ORDER BY priority DESC, updated DESC");
+        return string.Join("\n    ", parts);
+    }
+
+    private async Task Save()
+    {
+        if (!CanSave) return;
+        _saving = true;
+        StateHasChanged();
+
+        try
+        {
+            var id = IsEdit ? ConnectionId! : GenerateId();
+            var config = await ConfigStore.LoadAsync();
+
+            var selectedBoards = AvailableBoards
+                .Where(b => SelectedBoardIds.Contains(b.Id))
+                .Select(b => new BoardConfig { Id = b.Id, Name = b.Name })
+                .ToList();
+
+            var conn = new ConnectionConfig
+            {
+                Id = id,
+                DisplayName = DisplayName.Trim(),
+                BaseUrl = SiteUrl,
+                Email = Email.Trim(),
+                Auth = new AuthConfig { Type = "apiToken", SecretRef = $"Crosswalk/{id}" },
+                Projects = [.. SelectedProjects],
+                Boards = selectedBoards,
+                Enabled = true
+            };
+
+            if (IsEdit)
+            {
+                var index = config.Connections.FindIndex(c => c.Id == id);
+                if (index >= 0)
+                    config.Connections[index] = conn;
+                else
+                    config.Connections.Add(conn);
+            }
+            else
+            {
+                config.Connections.Add(conn);
+            }
+
+            await ConfigStore.SaveAsync(config);
+            await SecretStore.SetAsync($"Crosswalk/{id}", ApiToken);
+
+            // Trigger refresh for this connection
+            _ = Task.Run(() => AppState.RefreshConnectionAsync(id));
+
+            Nav.NavigateTo("/connections");
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private void Cancel() => Nav.NavigateTo("/connections");
+
+    private string GenerateId()
+    {
+        // Re-derive each time until save, so it picks up the latest DisplayName/URL
+        var name = JiraUrlNormalizer.ExtractSiteName(SiteUrl);
+        if (string.IsNullOrEmpty(name) && !string.IsNullOrWhiteSpace(DisplayName))
+            name = DisplayName;
+
+        var id = new string((name ?? "site")
+            .ToLowerInvariant()
+            .Where(c => char.IsLetterOrDigit(c) || c == '-')
+            .ToArray());
+
+        if (string.IsNullOrEmpty(id))
+            id = "site-" + Guid.NewGuid().ToString("N")[..6];
+
+        return id;
+    }
+}

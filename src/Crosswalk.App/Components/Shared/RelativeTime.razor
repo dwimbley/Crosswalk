@@ -1,0 +1,17 @@
+@* Relative time display (e.g., "10m ago", "2h ago", "3d ago") *@
+<span class="updated-relative" title="@Time.ToString("g")">@Format(Time)</span>
+
+@code {
+    [Parameter] public DateTimeOffset Time { get; set; }
+
+    private static string Format(DateTimeOffset time)
+    {
+        var diff = DateTimeOffset.Now - time;
+        if (diff.TotalMinutes < 1) return "Just now";
+        if (diff.TotalMinutes < 60) return $"{(int)diff.TotalMinutes}m ago";
+        if (diff.TotalHours < 24) return $"{(int)diff.TotalHours}h ago";
+        if (diff.TotalDays < 7) return $"{(int)diff.TotalDays}d ago";
+        if (diff.TotalDays < 30) return $"{(int)(diff.TotalDays / 7)}w ago";
+        return time.ToString("MMM d");
+    }
+}

@@ -1,0 +1,128 @@
+@inject AppState AppState
+@inject NavigationManager Nav
+@implements IDisposable
+
+<header class="topbar">
+    <span class="topbar-brand">Crosswalk</span>
+    <span class="topbar-pill">Read-only</span>
+
+    <nav class="topbar-nav">
+        <a href="/" class="@(IsActive("/") ? "active" : "")">
+            Queue
+            @if (TicketCount > 0)
+            {
+                <span class="topbar-badge">@TicketCount</span>
+            }
+        </a>
+        <a href="/connections" class="@(IsActive("/connections") ? "active" : "")">
+            Connections
+            @if (ConnectionCount > 0)
+            {
+                <span class="topbar-badge">@ConnectionCount</span>
+            }
+        </a>
+    </nav>
+
+    <div class="topbar-sync-pills">
+        @foreach (var status in Statuses)
+        {
+            <span class="sync-pill @GetSyncPillClass(status)" title="@GetSyncTooltip(status)">
+                <span class="dot"></span>
+                @status.DisplayName
+                @if (status.Health == ConnectionHealth.Healthy && status.LastSuccessfulRefresh.HasValue)
+                {
+                    <span>Synced @FormatSyncTime(status.LastSuccessfulRefresh.Value)</span>
+                }
+                else if (status.Health == ConnectionHealth.Refreshing)
+                {
+                    <span>Refreshing&hellip;</span>
+                }
+                else if (status.Health == ConnectionHealth.NeedsReauthorization)
+                {
+                    <button class="reauth-btn" @onclick="() => GoToReauth(status.Id)">Reauthorize</button>
+                }
+                else if (status.Health == ConnectionHealth.SyncFailed)
+                {
+                    <span>Sync failed</span>
+                }
+            </span>
+        }
+
+        <button class="topbar-refresh-btn" @onclick="RefreshAll" disabled="@_refreshing">
+            @(_refreshing ? "Refreshing\u2026" : "\u21BB Refresh all")
+        </button>
+    </div>
+</header>
+
+@code {
+    private List<ConnectionStatus> Statuses = [];
+    private int TicketCount;
+    private int ConnectionCount;
+    private bool _refreshing;
+
+    protected override void OnInitialized()
+    {
+        AppState.OnStateChanged += OnStateChanged;
+        Refresh();
+    }
+
+    private void OnStateChanged()
+    {
+        InvokeAsync(() =>
+        {
+            Refresh();
+            StateHasChanged();
+        });
+    }
+
+    private void Refresh()
+    {
+        Statuses = AppState.GetConnectionStatuses();
+        TicketCount = AppState.GetAllTickets().Count(t => t.NormalizedCategory != NormalizedCategory.Done);
+        ConnectionCount = Statuses.Count;
+    }
+
+    private async Task RefreshAll()
+    {
+        _refreshing = true;
+        StateHasChanged();
+        await AppState.RefreshAllAsync();
+        _refreshing = false;
+        StateHasChanged();
+    }
+
+    private bool IsActive(string path)
+    {
+        var uri = new Uri(Nav.Uri);
+        return uri.AbsolutePath == path || uri.AbsolutePath.StartsWith(path + "/");
+    }
+
+    private void GoToReauth(string connectionId) => Nav.NavigateTo($"/connections/edit/{connectionId}");
+
+    private static string GetSyncPillClass(ConnectionStatus s) => s.Health switch
+    {
+        ConnectionHealth.Healthy => "healthy",
+        ConnectionHealth.Refreshing => "refreshing",
+        ConnectionHealth.NeedsReauthorization => "needs-reauth",
+        ConnectionHealth.SyncFailed => "sync-failed",
+        _ => ""
+    };
+
+    private static string GetSyncTooltip(ConnectionStatus s)
+    {
+        if (s.Health == ConnectionHealth.SyncFailed && s.Error != null)
+            return s.Error;
+        if (s.LastSuccessfulRefresh.HasValue)
+            return $"Last synced: {s.LastSuccessfulRefresh.Value:g}";
+        return s.Health.ToString();
+    }
+
+    private static string FormatSyncTime(DateTimeOffset time)
+    {
+        var diff = DateTimeOffset.Now - time;
+        if (diff.TotalMinutes < 1) return "Just now";
+        return time.ToLocalTime().ToString("h:mm tt");
+    }
+
+    public void Dispose() => AppState.OnStateChanged -= OnStateChanged;
+}

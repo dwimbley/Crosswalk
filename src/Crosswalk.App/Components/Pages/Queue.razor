@@ -1,0 +1,712 @@
+@page "/"
+@inject AppState AppState
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+@implements IDisposable
+
+<PageTitle>Crosswalk</PageTitle>
+
+@if (!HasAnyConnections)
+{
+    <!-- First run: no connections -->
+    <div class="empty-state" style="padding-top: 6rem;">
+        <h2>Welcome to Crosswalk</h2>
+        <p>See your assigned Jira tickets across every Jira Cloud site, in one read-only view.</p>
+        <a href="/connections/add" class="btn-primary">Connect a Jira site</a>
+    </div>
+}
+else
+{
+    <!-- Filter bar -->
+    <div class="filter-bar">
+        <div class="filter-row">
+            <div class="filter-search">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                <input type="text" placeholder="Search key or summary..." @bind="SearchText" @bind:event="oninput" @onkeydown="OnSearchKeyDown" id="search-input" />
+            </div>
+
+            <div class="quick-views">
+                <button class="quick-view-btn @(QuickView == "open" ? "active" : "")" @onclick='() => SetQuickView("open")'>
+                    All open <span class="count">@OpenCount</span>
+                </button>
+                <button class="quick-view-btn @(QuickView == "inprogress" ? "active" : "")" @onclick='() => SetQuickView("inprogress")'>
+                    In progress <span class="count">@InProgressCount</span>
+                </button>
+                <button class="quick-view-btn @(QuickView == "blocked" ? "active" : "")" @onclick='() => SetQuickView("blocked")'>
+                    Blocked <span class="count">@BlockedCount</span>
+                </button>
+                <button class="quick-view-btn @(QuickView == "recent" ? "active" : "")" @onclick='() => SetQuickView("recent")'>
+                    Recently updated <span class="count">@RecentCount</span>
+                </button>
+            </div>
+
+            <div class="filter-spacer"></div>
+
+            <div class="filter-group-by">
+                <label>Group by</label>
+                <select class="filter-select" @bind="GroupBy" @bind:after="OnFilterChanged">
+                    <option value="none">No grouping</option>
+                    <option value="site">Site</option>
+                    <option value="project">Project</option>
+                    <option value="status">Status</option>
+                </select>
+            </div>
+
+            <a href="/settings" class="settings-btn">&#9881; Settings</a>
+        </div>
+
+        <div class="filter-row">
+            <div class="filter-select-group">
+                <label>Site</label>
+                <select class="filter-select @(FilterSite != "" ? "has-value" : "")" @bind="FilterSite" @bind:after="OnFilterChanged">
+                    <option value="">All sites</option>
+                    @foreach (var site in AvailableSites)
+                    {
+                        <option value="@site.Id">@site.DisplayName</option>
+                    }
+                </select>
+            </div>
+
+            <div class="filter-select-group">
+                <label>Project</label>
+                <select class="filter-select @(FilterProject != "" ? "has-value" : "")" @bind="FilterProject" @bind:after="OnFilterChanged">
+                    <option value="">All projects</option>
+                    @foreach (var proj in AvailableProjects)
+                    {
+                        <option value="@proj">@proj</option>
+                    }
+                </select>
+            </div>
+
+            <div class="filter-select-group">
+                <label>Board</label>
+                <select class="filter-select @(FilterBoard != "" ? "has-value" : "")" @bind="FilterBoard" @bind:after="OnFilterChanged">
+                    <option value="">All boards</option>
+                    @foreach (var board in AvailableBoards)
+                    {
+                        <option value="@board">@board</option>
+                    }
+                </select>
+            </div>
+
+            <div class="filter-select-group">
+                <label>Status</label>
+                <select class="filter-select @(FilterStatus != "" ? "has-value" : "")" @bind="FilterStatus" @bind:after="OnFilterChanged">
+                    <option value="">Any status</option>
+                    <optgroup label="Category">
+                        <option value="cat:ToDo">To do</option>
+                        <option value="cat:InProgress">In progress</option>
+                        <option value="cat:InReview">In review</option>
+                        <option value="cat:Blocked">Blocked</option>
+                        <option value="cat:Done">Done</option>
+                    </optgroup>
+                    @foreach (var group in RawStatusesBySite)
+                    {
+                        <optgroup label="@group.Key">
+                            @foreach (var status in group.Value)
+                            {
+                                <option value="raw:@status">@status</option>
+                            }
+                        </optgroup>
+                    }
+                </select>
+            </div>
+
+            <div class="filter-select-group">
+                <label>Priority</label>
+                <select class="filter-select @(FilterPriority != "" ? "has-value" : "")" @bind="FilterPriority" @bind:after="OnFilterChanged">
+                    <option value="">Any priority</option>
+                    <option value="Highest">Highest</option>
+                    <option value="High">High</option>
+                    <option value="Medium">Medium</option>
+                    <option value="Low">Low</option>
+                    <option value="Lowest">Lowest</option>
+                </select>
+            </div>
+
+            <label class="show-completed-toggle">
+                <input type="checkbox" @bind="ShowCompleted" @bind:after="OnFilterChanged" />
+                Show completed
+            </label>
+
+            @if (HasActiveFilters)
+            {
+                <button class="clear-filters-btn" @onclick="ClearFilters">Clear filters</button>
+            }
+
+            <div class="filter-spacer"></div>
+
+            <span class="result-count">
+                @FilteredTickets.Count @(FilteredTickets.Count == 1 ? "ticket" : "tickets")
+                @if (StaleCount > 0)
+                {
+                    <span class="stale-count"> (@StaleCount stale)</span>
+                }
+            </span>
+        </div>
+    </div>
+
+    <!-- Per-connection error/stale banners -->
+    @foreach (var status in Statuses.Where(s => s.Health == ConnectionHealth.NeedsReauthorization || s.Health == ConnectionHealth.SyncFailed))
+    {
+        <div class="conn-banner @(status.Health == ConnectionHealth.NeedsReauthorization ? "banner-reauth" : "banner-failed")">
+            <SiteBadge DisplayName="@status.DisplayName" Color="@status.Color" />
+            <span>
+                @if (status.Health == ConnectionHealth.NeedsReauthorization)
+                {
+                    <span>needs reauthorization. Showing cached tickets.</span>
+                }
+                else
+                {
+                    <span>sync failed: @status.Error</span>
+                }
+            </span>
+            <span style="flex:1;"></span>
+            @if (status.Health == ConnectionHealth.NeedsReauthorization)
+            {
+                <a href="/connections/edit/@status.Id" class="banner-action">Reauthorize</a>
+            }
+            else
+            {
+                <button class="banner-action" @onclick="() => AppState.RefreshConnectionAsync(status.Id)">Retry</button>
+            }
+        </div>
+    }
+
+    @if (FilteredTickets.Count == 0)
+    {
+        @if (AllTickets.Count == 0 && !HasActiveFilters)
+        {
+            <!-- All caught up -->
+            <div class="empty-state">
+                <h2>All caught up!</h2>
+                <p>You have no open tickets assigned to you.</p>
+            </div>
+        }
+        else
+        {
+            <!-- No matches -->
+            <div class="empty-state">
+                <h2>No tickets match these filters</h2>
+                <p class="active-filters">@GetActiveFilterDescription()</p>
+                <button class="btn-primary" @onclick="ClearFilters">Clear filters</button>
+            </div>
+        }
+    }
+    else
+    {
+        <!-- Desktop table -->
+        <div class="ticket-table-container">
+            <table class="ticket-table" role="grid">
+                <thead>
+                    <tr>
+                        <th class="col-key sortable @(SortField == "key" ? "sorted" : "")"
+                            @onclick='() => ToggleSort("key")' aria-sort="@GetAriaSort("key")">
+                            Key <span class="sort-icon">@GetSortIcon("key")</span>
+                        </th>
+                        <th class="col-summary">Summary</th>
+                        <th class="col-site sortable @(SortField == "site" ? "sorted" : "")"
+                            @onclick='() => ToggleSort("site")' aria-sort="@GetAriaSort("site")">
+                            Site <span class="sort-icon">@GetSortIcon("site")</span>
+                        </th>
+                        <th class="col-project sortable @(SortField == "project" ? "sorted" : "")"
+                            @onclick='() => ToggleSort("project")' aria-sort="@GetAriaSort("project")">
+                            Project <span class="sort-icon">@GetSortIcon("project")</span>
+                        </th>
+                        <th class="col-status sortable @(SortField == "status" ? "sorted" : "")"
+                            @onclick='() => ToggleSort("status")' aria-sort="@GetAriaSort("status")">
+                            Status in Jira <span class="sort-icon">@GetSortIcon("status")</span>
+                        </th>
+                        <th class="col-priority sortable @(SortField == "priority" ? "sorted" : "")"
+                            @onclick='() => ToggleSort("priority")' aria-sort="@GetAriaSort("priority")">
+                            Priority <span class="sort-icon">@GetSortIcon("priority")</span>
+                        </th>
+                        <th class="col-due sortable @(SortField == "due" ? "sorted" : "")"
+                            @onclick='() => ToggleSort("due")' aria-sort="@GetAriaSort("due")">
+                            Due <span class="sort-icon">@GetSortIcon("due")</span>
+                        </th>
+                        <th class="col-updated sortable @(SortField == "updated" ? "sorted" : "")"
+                            @onclick='() => ToggleSort("updated")' aria-sort="@GetAriaSort("updated")">
+                            Updated <span class="sort-icon">@GetSortIcon("updated")</span>
+                        </th>
+                        <th class="col-link"><span class="sr-only">Open</span></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @if (GroupBy == "none")
+                    {
+                        @foreach (var ticket in FilteredTickets)
+                        {
+                            @TicketRowFragment(ticket)
+                        }
+                    }
+                    else
+                    {
+                        @foreach (var group in GroupedTickets)
+                        {
+                            <tr class="group-header-row">
+                                <td colspan="9">
+                                    @group.Label
+                                    <span class="group-count">@group.Tickets.Count</span>
+                                    @if (!string.IsNullOrEmpty(group.Context))
+                                    {
+                                        <span class="group-context">@group.Context</span>
+                                    }
+                                </td>
+                            </tr>
+                            @foreach (var ticket in group.Tickets)
+                            {
+                                @TicketRowFragment(ticket)
+                            }
+                        }
+                    }
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Mobile cards -->
+        <div class="ticket-cards">
+            @foreach (var ticket in FilteredTickets)
+            {
+                <div class="ticket-card @(ticket.IsStale ? "stale" : "")" @onclick="() => SelectTicket(ticket)">
+                    <div class="ticket-card-top">
+                        <span class="ticket-key">@ticket.Key</span>
+                        <SiteBadge DisplayName="@ticket.SiteDisplayName" Color="@ticket.SiteColor" />
+                        <StatusBadge StatusName="@ticket.Status" Category="@ticket.NormalizedCategory" />
+                        @if (ticket.IsStale)
+                        {
+                            <span class="stale-tag">Stale</span>
+                        }
+                    </div>
+                    <div class="ticket-card-summary">@ticket.Summary</div>
+                    <div class="ticket-card-meta">
+                        <PriorityDisplay PriorityName="@ticket.Priority" PriorityOrder="@ticket.PriorityOrder" />
+                        <DueDate Date="@ticket.DueDate" />
+                        <RelativeTime Time="@ticket.Updated" />
+                    </div>
+                </div>
+            }
+        </div>
+    }
+}
+
+<DetailDrawer
+    Ticket="@SelectedTicket"
+    CurrentIndex="@SelectedIndex"
+    TotalCount="@FilteredTickets.Count"
+    OnClose="CloseDrawer"
+    OnPrevious="PreviousTicket"
+    OnNext="NextTicket" />
+
+@code {
+    // All data
+    private List<TicketViewModel> AllTickets = [];
+    private List<ConnectionStatus> Statuses = [];
+    private bool HasAnyConnections;
+
+    // Filters
+    private string SearchText { get; set; } = "";
+    private string QuickView { get; set; } = "open";
+    private string GroupBy { get; set; } = "none";
+    private string FilterSite { get; set; } = "";
+    private string FilterProject { get; set; } = "";
+    private string FilterBoard { get; set; } = "";
+    private string FilterStatus { get; set; } = "";
+    private string FilterPriority { get; set; } = "";
+    private bool ShowCompleted { get; set; }
+
+    // Sort
+    private string SortField { get; set; } = "priority";
+    private bool SortDescending { get; set; }
+
+    // Selection
+    private TicketViewModel? SelectedTicket;
+    private int SelectedIndex;
+
+    // Computed
+    private List<TicketViewModel> FilteredTickets = [];
+    private List<TicketGroup> GroupedTickets = [];
+    private int OpenCount, InProgressCount, BlockedCount, RecentCount, StaleCount;
+
+    // Filter options
+    private List<ConnectionStatus> AvailableSites = [];
+    private List<string> AvailableProjects = [];
+    private List<string> AvailableBoards = [];
+    private Dictionary<string, List<string>> RawStatusesBySite = [];
+
+    private bool _jsInitialized;
+
+    protected override void OnInitialized()
+    {
+        AppState.OnStateChanged += OnStateChanged;
+        Nav.LocationChanged += OnLocationChanged;
+        ReadQueryString();
+        RefreshData();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender && !_jsInitialized)
+        {
+            _jsInitialized = true;
+            try { await JS.InvokeVoidAsync("crosswalk.registerSlashFocus"); } catch { }
+        }
+    }
+
+    private void OnStateChanged()
+    {
+        InvokeAsync(() =>
+        {
+            RefreshData();
+            StateHasChanged();
+        });
+    }
+
+    private bool _selfNavigation;
+
+    private void OnLocationChanged(object? sender, Microsoft.AspNetCore.Components.Routing.LocationChangedEventArgs e)
+    {
+        if (_selfNavigation)
+        {
+            _selfNavigation = false;
+            return;
+        }
+        ReadQueryString();
+        ApplyFilters();
+        StateHasChanged();
+    }
+
+    private void RefreshData()
+    {
+        AllTickets = AppState.GetAllTickets();
+        Statuses = AppState.GetConnectionStatuses();
+        HasAnyConnections = Statuses.Count > 0;
+
+        // Build filter options
+        AvailableSites = Statuses;
+        AvailableProjects = AllTickets.Select(t => $"{t.ProjectKey} {t.ProjectName}").Distinct().OrderBy(x => x).ToList();
+        AvailableBoards = AllTickets.SelectMany(t => t.Boards).Select(b => b.Name).Distinct().OrderBy(x => x).ToList();
+        RawStatusesBySite = AllTickets
+            .GroupBy(t => t.SiteDisplayName)
+            .ToDictionary(g => g.Key, g => g.Select(t => t.Status).Distinct().OrderBy(x => x).ToList());
+
+        // Counts (over all tickets, never include Done)
+        OpenCount = AllTickets.Count(t => t.NormalizedCategory != NormalizedCategory.Done);
+        InProgressCount = AllTickets.Count(t => t.NormalizedCategory == NormalizedCategory.InProgress);
+        BlockedCount = AllTickets.Count(t => t.NormalizedCategory == NormalizedCategory.Blocked);
+        RecentCount = AllTickets.Count(t => (DateTimeOffset.Now - t.Updated).TotalHours <= 24 && t.NormalizedCategory != NormalizedCategory.Done);
+
+        ApplyFilters();
+    }
+
+    private void ApplyFilters()
+    {
+        var tickets = AllTickets.AsEnumerable();
+
+        // Quick view
+        tickets = QuickView switch
+        {
+            "open" => tickets.Where(t => t.NormalizedCategory != NormalizedCategory.Done),
+            "inprogress" => tickets.Where(t => t.NormalizedCategory == NormalizedCategory.InProgress && t.NormalizedCategory != NormalizedCategory.Done),
+            "blocked" => tickets.Where(t => t.NormalizedCategory == NormalizedCategory.Blocked && t.NormalizedCategory != NormalizedCategory.Done),
+            "recent" => tickets.Where(t => (DateTimeOffset.Now - t.Updated).TotalHours <= 24 && t.NormalizedCategory != NormalizedCategory.Done),
+            _ => tickets
+        };
+
+        // Show completed toggle
+        if (!ShowCompleted && QuickView != "open")
+            tickets = tickets.Where(t => t.NormalizedCategory != NormalizedCategory.Done);
+
+        // Search
+        if (!string.IsNullOrWhiteSpace(SearchText))
+        {
+            var q = SearchText.Trim();
+            tickets = tickets.Where(t =>
+                t.Key.Contains(q, StringComparison.OrdinalIgnoreCase) ||
+                t.Summary.Contains(q, StringComparison.OrdinalIgnoreCase));
+        }
+
+        // Dropdown filters
+        if (FilterSite != "")
+            tickets = tickets.Where(t => t.SiteId == FilterSite);
+        if (FilterProject != "")
+            tickets = tickets.Where(t => $"{t.ProjectKey} {t.ProjectName}" == FilterProject);
+        if (FilterBoard != "")
+            tickets = tickets.Where(t => t.Boards.Any(b => b.Name == FilterBoard));
+        if (FilterStatus != "")
+        {
+            if (FilterStatus.StartsWith("cat:"))
+            {
+                var cat = Enum.Parse<NormalizedCategory>(FilterStatus[4..]);
+                tickets = tickets.Where(t => t.NormalizedCategory == cat);
+            }
+            else if (FilterStatus.StartsWith("raw:"))
+            {
+                var raw = FilterStatus[4..];
+                tickets = tickets.Where(t => t.Status == raw);
+            }
+        }
+        if (FilterPriority != "")
+            tickets = tickets.Where(t => t.Priority == FilterPriority);
+
+        // Sort
+        var sortField = QuickView == "recent" ? "updated" : SortField;
+        var desc = QuickView == "recent" ? true : SortDescending;
+        FilteredTickets = TicketSorter.Sort(tickets, sortField, desc);
+
+        StaleCount = FilteredTickets.Count(t => t.IsStale);
+
+        // Grouping
+        if (GroupBy != "none")
+            GroupedTickets = BuildGroups(FilteredTickets);
+    }
+
+    private List<TicketGroup> BuildGroups(List<TicketViewModel> tickets)
+    {
+        return GroupBy switch
+        {
+            "site" => tickets.GroupBy(t => t.SiteId).Select(g =>
+            {
+                var first = g.First();
+                return new TicketGroup
+                {
+                    Label = first.SiteDisplayName,
+                    Context = $"{new Uri(first.SiteBaseUrl).Host} \u00b7 {first.SiteEmail}",
+                    Tickets = g.ToList()
+                };
+            }).ToList(),
+
+            "project" => tickets.GroupBy(t => $"{t.SiteId}:{t.ProjectKey}").Select(g =>
+            {
+                var first = g.First();
+                return new TicketGroup
+                {
+                    Label = $"{first.ProjectKey} {first.ProjectName}",
+                    Context = first.SiteDisplayName,
+                    Tickets = g.ToList()
+                };
+            }).ToList(),
+
+            "status" => tickets.GroupBy(t => t.NormalizedCategory).OrderBy(g => (int)g.Key).Select(g =>
+            {
+                var rawStatuses = string.Join(", ", g.Select(t => t.Status).Distinct());
+                return new TicketGroup
+                {
+                    Label = g.Key.ToString(),
+                    Context = rawStatuses,
+                    Tickets = g.ToList()
+                };
+            }).ToList(),
+
+            _ => [new TicketGroup { Label = "All", Tickets = tickets }]
+        };
+    }
+
+    private void OnFilterChanged()
+    {
+        ApplyFilters();
+        UpdateQueryString();
+    }
+
+    // Sort toggling
+    private void ToggleSort(string field)
+    {
+        if (SortField == field)
+            SortDescending = !SortDescending;
+        else
+        {
+            SortField = field;
+            SortDescending = field == "updated"; // updated defaults to desc
+        }
+        ApplyFilters();
+        UpdateQueryString();
+    }
+
+    private string GetSortIcon(string field)
+    {
+        if (SortField != field) return "\u2195"; // ↕
+        return SortDescending ? "\u2193" : "\u2191"; // ↓ or ↑
+    }
+
+    private string GetAriaSort(string field)
+    {
+        if (SortField != field) return "none";
+        return SortDescending ? "descending" : "ascending";
+    }
+
+    // Quick views
+    private void SetQuickView(string view)
+    {
+        QuickView = QuickView == view ? "all" : view;
+        ApplyFilters();
+        UpdateQueryString();
+    }
+
+    // Filters
+    private bool HasActiveFilters =>
+        FilterSite != "" || FilterProject != "" || FilterBoard != "" ||
+        FilterStatus != "" || FilterPriority != "" || ShowCompleted ||
+        !string.IsNullOrWhiteSpace(SearchText);
+
+    private void ClearFilters()
+    {
+        SearchText = "";
+        FilterSite = "";
+        FilterProject = "";
+        FilterBoard = "";
+        FilterStatus = "";
+        FilterPriority = "";
+        ShowCompleted = false;
+        QuickView = "open";
+        ApplyFilters();
+        UpdateQueryString();
+    }
+
+    private string GetActiveFilterDescription()
+    {
+        var parts = new List<string>();
+        if (FilterSite != "") parts.Add($"Site: {FilterSite}");
+        if (FilterProject != "") parts.Add($"Project: {FilterProject}");
+        if (FilterBoard != "") parts.Add($"Board: {FilterBoard}");
+        if (FilterStatus != "") parts.Add($"Status: {FilterStatus}");
+        if (FilterPriority != "") parts.Add($"Priority: {FilterPriority}");
+        if (!string.IsNullOrWhiteSpace(SearchText)) parts.Add($"Search: \"{SearchText}\"");
+        return parts.Count > 0 ? string.Join(", ", parts) : "No filters active";
+    }
+
+    // Ticket selection / drawer
+    private void SelectTicket(TicketViewModel ticket)
+    {
+        SelectedTicket = ticket;
+        SelectedIndex = FilteredTickets.IndexOf(ticket);
+        UpdateQueryString();
+    }
+
+    private void CloseDrawer()
+    {
+        SelectedTicket = null;
+        UpdateQueryString();
+    }
+
+    private void PreviousTicket()
+    {
+        if (SelectedIndex > 0)
+        {
+            SelectedIndex--;
+            SelectedTicket = FilteredTickets[SelectedIndex];
+            UpdateQueryString();
+        }
+    }
+
+    private void NextTicket()
+    {
+        if (SelectedIndex < FilteredTickets.Count - 1)
+        {
+            SelectedIndex++;
+            SelectedTicket = FilteredTickets[SelectedIndex];
+            UpdateQueryString();
+        }
+    }
+
+    // Keyboard
+    private void OnSearchKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Escape")
+        {
+            SearchText = "";
+            ApplyFilters();
+        }
+    }
+
+    // URL query string sync
+    private void ReadQueryString()
+    {
+        var uri = new Uri(Nav.Uri);
+        var query = System.Web.HttpUtility.ParseQueryString(uri.Query);
+
+        QuickView = query["view"] ?? "open";
+        SortField = query["sort"] ?? "priority";
+        SortDescending = query["desc"] == "1";
+        GroupBy = query["group"] ?? "none";
+        SearchText = query["q"] ?? "";
+        FilterSite = query["site"] ?? "";
+        FilterProject = query["project"] ?? "";
+        FilterBoard = query["board"] ?? "";
+        FilterStatus = query["status"] ?? "";
+        FilterPriority = query["priority"] ?? "";
+        ShowCompleted = query["completed"] == "1";
+
+        var ticketId = query["ticket"];
+        if (!string.IsNullOrEmpty(ticketId) && FilteredTickets.Count > 0)
+        {
+            var ticket = FilteredTickets.FirstOrDefault(t => t.UniqueId == ticketId);
+            if (ticket != null)
+                SelectTicket(ticket);
+        }
+    }
+
+    private void UpdateQueryString()
+    {
+        var parts = new List<string>();
+        if (QuickView != "open") parts.Add($"view={Uri.EscapeDataString(QuickView)}");
+        if (SortField != "priority") parts.Add($"sort={Uri.EscapeDataString(SortField)}");
+        if (SortDescending) parts.Add("desc=1");
+        if (GroupBy != "none") parts.Add($"group={Uri.EscapeDataString(GroupBy)}");
+        if (!string.IsNullOrWhiteSpace(SearchText)) parts.Add($"q={Uri.EscapeDataString(SearchText)}");
+        if (FilterSite != "") parts.Add($"site={Uri.EscapeDataString(FilterSite)}");
+        if (FilterProject != "") parts.Add($"project={Uri.EscapeDataString(FilterProject)}");
+        if (FilterBoard != "") parts.Add($"board={Uri.EscapeDataString(FilterBoard)}");
+        if (FilterStatus != "") parts.Add($"status={Uri.EscapeDataString(FilterStatus)}");
+        if (FilterPriority != "") parts.Add($"priority={Uri.EscapeDataString(FilterPriority)}");
+        if (ShowCompleted) parts.Add("completed=1");
+        if (SelectedTicket != null) parts.Add($"ticket={Uri.EscapeDataString(SelectedTicket.UniqueId)}");
+
+        var qs = parts.Count > 0 ? "?" + string.Join("&", parts) : "";
+        _selfNavigation = true;
+        Nav.NavigateTo("/" + qs, replace: true);
+    }
+
+    // Render helper
+    private RenderFragment TicketRowFragment(TicketViewModel ticket) => __builder =>
+    {
+        <tr class="ticket-row @(SelectedTicket?.UniqueId == ticket.UniqueId ? "selected" : "") @(ticket.IsStale ? "stale" : "")"
+            @onclick="() => SelectTicket(ticket)" tabindex="0" role="row">
+            <td>
+                <span class="ticket-key">@ticket.Key</span>
+                @if (ticket.IsStale)
+                {
+                    <span class="stale-tag" title="Last synced: @ticket.LastSuccessfulRefresh?.ToLocalTime().ToString("g")">Stale</span>
+                }
+            </td>
+            <td><span class="ticket-summary" title="@ticket.Summary">@ticket.Summary</span></td>
+            <td><SiteBadge DisplayName="@ticket.SiteDisplayName" Color="@ticket.SiteColor" /></td>
+            <td>
+                <span class="ticket-project-key">@ticket.ProjectKey</span>
+                <span class="ticket-project-name">@ticket.ProjectName</span>
+            </td>
+            <td><StatusBadge StatusName="@ticket.Status" Category="@ticket.NormalizedCategory" /></td>
+            <td><PriorityDisplay PriorityName="@ticket.Priority" PriorityOrder="@ticket.PriorityOrder" /></td>
+            <td><DueDate Date="@ticket.DueDate" /></td>
+            <td><RelativeTime Time="@ticket.Updated" /></td>
+            <td>
+                <a href="@ticket.JiraUrl" target="_blank" rel="noopener noreferrer" class="jira-link"
+                   @onclick:stopPropagation="true" title="Open in Jira" aria-label="Open @ticket.Key in Jira">
+                    &#x2197;
+                </a>
+            </td>
+        </tr>
+    };
+
+    public void Dispose()
+    {
+        AppState.OnStateChanged -= OnStateChanged;
+        Nav.LocationChanged -= OnLocationChanged;
+    }
+
+    private sealed class TicketGroup
+    {
+        public string Label { get; init; } = "";
+        public string? Context { get; init; }
+        public List<TicketViewModel> Tickets { get; init; } = [];
+    }
+}

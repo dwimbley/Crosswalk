@@ -1,0 +1,20 @@
+@* Status badge showing Jira's raw status name with category coloring *@
+<span class="status-badge @CssClass">
+    <span class="status-dot"></span>
+    @StatusName
+</span>
+
+@code {
+    [Parameter] public string StatusName { get; set; } = "";
+    [Parameter] public NormalizedCategory Category { get; set; }
+
+    private string CssClass => Category switch
+    {
+        NormalizedCategory.ToDo => "cat-todo",
+        NormalizedCategory.InProgress => "cat-inprogress",
+        NormalizedCategory.InReview => "cat-inreview",
+        NormalizedCategory.Blocked => "cat-blocked",
+        NormalizedCategory.Done => "cat-done",
+        _ => "cat-todo"
+    };
+}

@@ -1,0 +1,9 @@
+{
+  "startAt": 0,
+  "maxResults": 50,
+  "total": 2,
+  "values": [
+    { "key": "CLM", "name": "Claims Platform" },
+    { "key": "PLAT", "name": "Platform Services" }
+  ]
+}

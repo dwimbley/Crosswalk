@@ -1,0 +1,359 @@
+@page "/settings"
+@inject IConfigStore ConfigStore
+@inject Crosswalk.Core.Secrets.ISecretStore SecretStore
+@inject Crosswalk.Core.Cache.ICacheStore CacheStore
+@inject AppState AppState
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+
+<PageTitle>Settings - Crosswalk</PageTitle>
+
+<div class="page-container">
+    <div class="page-breadcrumb">
+        <a href="/">&larr; Queue</a>
+        <span>&rsaquo;</span>
+        <span>Settings</span>
+    </div>
+
+    <h1 class="page-title">Settings</h1>
+
+    @if (_loaded)
+    {
+        <!-- Auto-refresh -->
+        <div class="settings-section">
+            <h2 class="settings-section-title">Auto-refresh</h2>
+            <div class="settings-row">
+                <label class="settings-label">Refresh interval</label>
+                <div class="settings-control">
+                    <select class="filter-select" @bind="RefreshMinutes" @bind:after="SaveSettings">
+                        <option value="5">Every 5 minutes</option>
+                        <option value="15">Every 15 minutes</option>
+                        <option value="30">Every 30 minutes</option>
+                        <option value="60">Every 60 minutes</option>
+                        <option value="0">Manual only</option>
+                    </select>
+                </div>
+            </div>
+        </div>
+
+        <!-- Queue defaults -->
+        <div class="settings-section">
+            <h2 class="settings-section-title">Queue defaults</h2>
+
+            <div class="settings-row">
+                <label class="settings-label">Default view</label>
+                <div class="settings-control">
+                    <select class="filter-select" @bind="DefaultView" @bind:after="SaveSettings">
+                        <option value="open">All open</option>
+                        <option value="all">All tickets</option>
+                        <option value="inprogress">In progress</option>
+                        <option value="blocked">Blocked</option>
+                        <option value="recent">Recently updated</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="settings-row">
+                <label class="settings-label">Default sort</label>
+                <div class="settings-control">
+                    <select class="filter-select" @bind="DefaultSort" @bind:after="SaveSettings">
+                        <option value="priority">Priority</option>
+                        <option value="updated">Updated</option>
+                        <option value="due">Due date</option>
+                        <option value="key">Key</option>
+                        <option value="site">Site</option>
+                        <option value="status">Status</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="settings-row">
+                <label class="settings-label">Default grouping</label>
+                <div class="settings-control">
+                    <select class="filter-select" @bind="DefaultGroupBy" @bind:after="SaveSettings">
+                        <option value="none">No grouping</option>
+                        <option value="site">Site</option>
+                        <option value="project">Project</option>
+                        <option value="status">Status</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="settings-row">
+                <label class="settings-label">Density</label>
+                <div class="settings-control">
+                    <select class="filter-select" @bind="DefaultDensity" @bind:after="SaveSettings">
+                        <option value="compact">Compact</option>
+                        <option value="comfortable">Comfortable</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="settings-row">
+                <label class="settings-label">Include completed</label>
+                <div class="settings-control">
+                    <label class="show-completed-toggle">
+                        <input type="checkbox" @bind="DefaultIncludeCompleted" @bind:after="SaveSettings" />
+                        Show completed tickets by default
+                    </label>
+                </div>
+            </div>
+
+            <div class="settings-row">
+                <label class="settings-label"></label>
+                <div class="settings-control">
+                    <button class="btn-secondary" @onclick="ApplyToQueue">Apply to queue now</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Storage -->
+        <div class="settings-section">
+            <h2 class="settings-section-title">Storage</h2>
+
+            <div class="settings-row">
+                <label class="settings-label">Config file</label>
+                <div class="settings-control">
+                    <div class="settings-path">
+                        <code>@ConfigStore.ConfigFilePath</code>
+                        <button class="btn-secondary" style="margin-left:0.5rem; font-size:0.75rem; padding:2px 8px;" @onclick="CopyConfigPath">Copy</button>
+                        <button class="btn-secondary" style="margin-left:0.25rem; font-size:0.75rem; padding:2px 8px;" @onclick="OpenConfigFolder">Open folder</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="settings-row">
+                <label class="settings-label">Tokens stored in</label>
+                <div class="settings-control">
+                    <span>@SecretStore.StoreName</span>
+                </div>
+            </div>
+
+            <div class="settings-row">
+                <label class="settings-label">Cache</label>
+                <div class="settings-control">
+                    <button class="btn-secondary" @onclick="ClearCache">Clear cache and reload</button>
+                    @if (_cacheCleared)
+                    {
+                        <span style="color:#16a34a; font-size:0.8125rem; margin-left:0.5rem;">Cache cleared</span>
+                    }
+                </div>
+            </div>
+        </div>
+
+        <!-- Export / Import -->
+        <div class="settings-section">
+            <h2 class="settings-section-title">Export / Import</h2>
+
+            <div class="settings-row">
+                <label class="settings-label">Export config</label>
+                <div class="settings-control">
+                    <button class="btn-secondary" @onclick="ExportConfig">Download config.json</button>
+                    <div class="form-hint">Exports connections and settings. API tokens are never included.</div>
+                </div>
+            </div>
+
+            <div class="settings-row">
+                <label class="settings-label">Import config</label>
+                <div class="settings-control">
+                    <InputFile OnChange="ImportConfigFile" accept=".json" class="form-input" style="padding:0.375rem;" />
+                    <div class="form-hint" style="margin-bottom:0.5rem;">Or paste config JSON below:</div>
+                    <textarea class="form-input" rows="4" placeholder="Paste config.json contents here..." @bind="_importJson"></textarea>
+                    <button class="btn-secondary" style="margin-top:0.5rem;" @onclick="ImportFromText" disabled="@string.IsNullOrWhiteSpace(_importJson)">Import from text</button>
+                    <div class="form-hint">Imports connections and settings. You'll need to re-enter API tokens for each site.</div>
+                    @if (_importMessage != null)
+                    {
+                        <div style="margin-top:0.25rem; font-size:0.8125rem; color:@(_importError ? "#dc2626" : "#16a34a");">@_importMessage</div>
+                    }
+                </div>
+            </div>
+        </div>
+
+        <!-- Config preview -->
+        <div class="settings-section">
+            <h2 class="settings-section-title">Config preview</h2>
+            <div class="form-hint" style="margin-bottom:0.5rem;">Live, read-only view of your config.json (API tokens are never stored here).</div>
+            <pre class="jql-preview" style="max-height:400px; overflow:auto; font-size:0.75rem;">@_configPreview</pre>
+        </div>
+
+        @if (_saved)
+        {
+            <div class="settings-saved-toast">Saved</div>
+        }
+    }
+</div>
+
+@code {
+    private bool _loaded;
+    private bool _saved;
+    private bool _cacheCleared;
+    private string? _importMessage;
+    private bool _importError;
+    private string _configPreview = "";
+    private string? _importJson;
+
+    // Settings values
+    private int RefreshMinutes;
+    private string DefaultView = "open";
+    private string DefaultSort = "priority";
+    private string DefaultGroupBy = "none";
+    private string DefaultDensity = "compact";
+    private bool DefaultIncludeCompleted;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var config = await ConfigStore.LoadAsync();
+        RefreshMinutes = config.RefreshMinutes;
+        DefaultView = config.Defaults.View;
+        DefaultSort = config.Defaults.Sort;
+        DefaultGroupBy = config.Defaults.GroupBy;
+        DefaultDensity = config.Defaults.Density;
+        DefaultIncludeCompleted = config.Defaults.IncludeCompleted;
+
+        await RefreshPreview();
+        _loaded = true;
+    }
+
+    private async Task SaveSettings()
+    {
+        var config = await ConfigStore.LoadAsync();
+        config.RefreshMinutes = RefreshMinutes;
+        config.Defaults.View = DefaultView;
+        config.Defaults.Sort = DefaultSort;
+        config.Defaults.GroupBy = DefaultGroupBy;
+        config.Defaults.Density = DefaultDensity;
+        config.Defaults.IncludeCompleted = DefaultIncludeCompleted;
+        await ConfigStore.SaveAsync(config);
+
+        await RefreshPreview();
+
+        _saved = true;
+        StateHasChanged();
+        _ = Task.Run(async () =>
+        {
+            await Task.Delay(2000);
+            _saved = false;
+            await InvokeAsync(StateHasChanged);
+        });
+    }
+
+    private void ApplyToQueue()
+    {
+        var parts = new List<string>();
+        if (DefaultView != "open") parts.Add($"view={DefaultView}");
+        if (DefaultSort != "priority") parts.Add($"sort={DefaultSort}");
+        if (DefaultGroupBy != "none") parts.Add($"group={DefaultGroupBy}");
+        if (DefaultIncludeCompleted) parts.Add("completed=1");
+        var qs = parts.Count > 0 ? "?" + string.Join("&", parts) : "";
+        Nav.NavigateTo("/" + qs);
+    }
+
+    private async Task CopyConfigPath()
+    {
+        await JS.InvokeVoidAsync("navigator.clipboard.writeText", ConfigStore.ConfigFilePath);
+    }
+
+    private async Task OpenConfigFolder()
+    {
+        // Best-effort: open the config folder
+        try
+        {
+            var dir = ConfigStore.ConfigDirectory;
+            if (OperatingSystem.IsWindows())
+                System.Diagnostics.Process.Start("explorer.exe", dir);
+            else if (OperatingSystem.IsMacOS())
+                System.Diagnostics.Process.Start("open", dir);
+            else
+                System.Diagnostics.Process.Start("xdg-open", dir);
+        }
+        catch { /* ignore if it fails */ }
+        await Task.CompletedTask;
+    }
+
+    private async Task ClearCache()
+    {
+        await CacheStore.ClearAllAsync();
+        _cacheCleared = true;
+        StateHasChanged();
+        await AppState.RefreshAllAsync();
+        _ = Task.Run(async () =>
+        {
+            await Task.Delay(3000);
+            _cacheCleared = false;
+            await InvokeAsync(StateHasChanged);
+        });
+    }
+
+    private async Task ExportConfig()
+    {
+        var config = await ConfigStore.LoadAsync();
+        var json = Crosswalk.Core.Configuration.ConfigExporter.Export(config);
+        var bytes = System.Text.Encoding.UTF8.GetBytes(json);
+        var base64 = Convert.ToBase64String(bytes);
+        await JS.InvokeVoidAsync("eval",
+            $"var a=document.createElement('a');a.href='data:application/json;base64,{base64}';a.download='crosswalk-config.json';a.click();");
+    }
+
+    private async Task ImportConfigFile(InputFileChangeEventArgs e)
+    {
+        try
+        {
+            using var stream = e.File.OpenReadStream(maxAllowedSize: 1024 * 512);
+            using var reader = new StreamReader(stream);
+            var json = await reader.ReadToEndAsync();
+            await DoImport(json);
+        }
+        catch (Exception ex)
+        {
+            _importMessage = $"Import failed: {ex.Message}";
+            _importError = true;
+        }
+    }
+
+    private async Task ImportFromText()
+    {
+        if (string.IsNullOrWhiteSpace(_importJson)) return;
+        await DoImport(_importJson);
+    }
+
+    private async Task DoImport(string json)
+    {
+        _importMessage = null;
+        _importError = false;
+
+        try
+        {
+            var imported = Crosswalk.Core.Configuration.ConfigExporter.Import(json);
+            await ConfigStore.SaveAsync(imported);
+
+            _importMessage = $"Imported {imported.Connections.Count} connections. Re-enter API tokens for each site.";
+
+            // Reload settings in UI
+            RefreshMinutes = imported.RefreshMinutes;
+            DefaultView = imported.Defaults.View;
+            DefaultSort = imported.Defaults.Sort;
+            DefaultGroupBy = imported.Defaults.GroupBy;
+            DefaultDensity = imported.Defaults.Density;
+            DefaultIncludeCompleted = imported.Defaults.IncludeCompleted;
+
+            await RefreshPreview();
+
+            // Reload app state so connections appear immediately
+            await AppState.InitializeAsync();
+            await AppState.RefreshAllAsync();
+        }
+        catch (Exception ex)
+        {
+            _importMessage = $"Import failed: {ex.Message}";
+            _importError = true;
+        }
+    }
+
+    private async Task RefreshPreview()
+    {
+        if (File.Exists(ConfigStore.ConfigFilePath))
+            _configPreview = await File.ReadAllTextAsync(ConfigStore.ConfigFilePath);
+        else
+            _configPreview = "{}";
+    }
+}

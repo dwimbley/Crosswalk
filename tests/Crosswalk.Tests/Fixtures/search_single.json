@@ -1,0 +1,49 @@
+{
+  "startAt": 0,
+  "maxResults": 2,
+  "total": 2,
+  "issues": [
+    {
+      "key": "CLM-100",
+      "fields": {
+        "summary": "Test ticket one",
+        "status": {
+          "name": "In Progress",
+          "statusCategory": { "key": "indeterminate", "name": "In Progress" }
+        },
+        "priority": { "name": "High", "id": "2" },
+        "duedate": "2026-11-15",
+        "updated": "2026-11-11T08:00:00.000+0000",
+        "created": "2026-11-01T10:00:00.000+0000",
+        "reporter": { "displayName": "Alex Johnson", "accountId": "acc-r1" },
+        "assignee": { "displayName": "David Wimbley", "accountId": "acc-a1" },
+        "project": { "key": "CLM", "name": "Claims Platform" },
+        "description": {
+          "version": 1,
+          "type": "doc",
+          "content": [
+            { "type": "paragraph", "content": [{ "type": "text", "text": "This is a test description." }] }
+          ]
+        }
+      }
+    },
+    {
+      "key": "CLM-101",
+      "fields": {
+        "summary": "Test ticket two",
+        "status": {
+          "name": "Code Review",
+          "statusCategory": { "key": "indeterminate", "name": "In Progress" }
+        },
+        "priority": { "name": "Medium", "id": "3" },
+        "duedate": null,
+        "updated": "2026-11-10T14:00:00.000+0000",
+        "created": "2026-11-02T09:00:00.000+0000",
+        "reporter": { "displayName": "Jane Smith", "accountId": "acc-r2" },
+        "assignee": { "displayName": "David Wimbley", "accountId": "acc-a1" },
+        "project": { "key": "CLM", "name": "Claims Platform" },
+        "description": null
+      }
+    }
+  ]
+}
